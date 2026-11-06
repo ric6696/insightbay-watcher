@@ -1,5 +1,6 @@
 """Notify a Slack/Discord webhook when a new InsightBay position matches a keyword."""
 
+import html
 import json
 import os
 import re
@@ -98,13 +99,30 @@ def notify(webhook_url, position):
     urllib.request.urlopen(req, timeout=15).close()
 
 
+def posting_text(html_text):
+    """Plain text of a posting's `div.job-detail` block (duties, requirements, how to apply, company info)."""
+    start = html_text.index('<div class="job-detail"')
+    end = html_text.rindex("<div", start, html_text.index('class="job-class"'))
+    block = re.sub(r"(?s)<(script|style)\b.*?</\1>", "", html_text[start:end])
+    block = re.sub(r"(?i)<br\s*/?>|</(p|div|li|h\d)>", "\n", block)
+    block = html.unescape(re.sub(r"<[^>]+>", " ", block))
+    return "\n".join(" ".join(line.split()) for line in block.splitlines() if line.strip())
+
+
 def open_draft_issue(position):
-    """Open a `draft-request` issue; a Claude routine listens for it and writes the application draft."""
+    """Open a `draft-request` issue; a Claude routine listens for it and writes the application draft.
+
+    The posting text goes into the issue because the routine's sandbox cannot reach InsightBay.
+    """
+    text = posting_text(fetch(position["url"]))
     req = urllib.request.Request(
         f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/issues",
         data=json.dumps({
             "title": f"[초안] {position['title']}",
-            "body": f"공고: {position['url']}\n마감일: {position['deadline'] or '-'}",
+            "body": (
+                f"공고: {position['url']}\n마감일: {position['deadline'] or '-'}\n\n"
+                f"## 공고 본문\n```\n{text}\n```"
+            ),
             "labels": ["draft-request"],
         }).encode("utf-8"),
         headers={
