@@ -110,6 +110,7 @@ def open_draft_issue(position):
         headers={
             "Authorization": f"Bearer {os.environ['GITHUB_TOKEN']}",
             "Accept": "application/vnd.github+json",
+            "Content-Type": "application/json",
             "User-Agent": USER_AGENT,
         },
     )
@@ -122,6 +123,8 @@ def main():
     draft_issues = os.environ.get("DRAFT_ISSUES", "").lower() == "true"
     if not keywords or not webhook_url:
         sys.exit("KEYWORDS and WEBHOOK_URL environment variables are required")
+    if draft_issues and not (os.environ.get("GITHUB_TOKEN") and os.environ.get("GITHUB_REPOSITORY")):
+        sys.exit("DRAFT_ISSUES requires GITHUB_TOKEN and GITHUB_REPOSITORY environment variables")
 
     positions = parse_positions(fetch(LIST_URL))
     if not positions:
@@ -135,6 +138,7 @@ def main():
 
     seen = set(json.loads(SEEN_FILE.read_text()))
     sent = 0
+    issue_errors = []
     try:
         for position in positions:
             if position["id"] in seen:
@@ -142,7 +146,12 @@ def main():
             if any(k in position["title"].lower() for k in keywords):
                 notify(webhook_url, position)
                 if draft_issues:
-                    open_draft_issue(position)
+                    # The alert already went out: a failed issue must not block marking it seen,
+                    # or every later run would re-send the same webhook alert.
+                    try:
+                        open_draft_issue(position)
+                    except Exception as e:
+                        issue_errors.append(f"{position['id']}: {e}")
                 sent += 1
                 print(f"Notified: {position['id']} {position['title']}")
             seen.add(position["id"])
@@ -150,6 +159,8 @@ def main():
         # Persist progress even if a later webhook call fails, so sent alerts are not repeated.
         SEEN_FILE.write_text(json.dumps(sorted(seen)) + "\n")
     print(f"Checked {len(positions)} positions, sent {sent} notifications")
+    if issue_errors:
+        sys.exit("Failed to open draft issues:\n" + "\n".join(issue_errors))
 
 
 if __name__ == "__main__":
