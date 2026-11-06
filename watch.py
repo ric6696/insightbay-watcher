@@ -98,9 +98,28 @@ def notify(webhook_url, position):
     urllib.request.urlopen(req, timeout=15).close()
 
 
+def open_draft_issue(position):
+    """Open a `draft-request` issue; a Claude routine listens for it and writes the application draft."""
+    req = urllib.request.Request(
+        f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/issues",
+        data=json.dumps({
+            "title": f"[초안] {position['title']}",
+            "body": f"공고: {position['url']}\n마감일: {position['deadline'] or '-'}",
+            "labels": ["draft-request"],
+        }).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {os.environ['GITHUB_TOKEN']}",
+            "Accept": "application/vnd.github+json",
+            "User-Agent": USER_AGENT,
+        },
+    )
+    urllib.request.urlopen(req, timeout=15).close()
+
+
 def main():
     keywords = [k.strip().lower() for k in os.environ.get("KEYWORDS", "").split(",") if k.strip()]
     webhook_url = os.environ.get("WEBHOOK_URL", "")
+    draft_issues = os.environ.get("DRAFT_ISSUES", "").lower() == "true"
     if not keywords or not webhook_url:
         sys.exit("KEYWORDS and WEBHOOK_URL environment variables are required")
 
@@ -122,6 +141,8 @@ def main():
                 continue
             if any(k in position["title"].lower() for k in keywords):
                 notify(webhook_url, position)
+                if draft_issues:
+                    open_draft_issue(position)
                 sent += 1
                 print(f"Notified: {position['id']} {position['title']}")
             seen.add(position["id"])
